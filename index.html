@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agency Commitment & Discount Calculator</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Agency Commitment & Discount Calculator</h1>
+      <p>Help Agencies and SIs to decide which commitment amount fits best with their needs.</p>
+    </header>
+
+    <main>
+      <section class="variables-section">
+        <h2>Variables</h2>
+        <form id="calculator-form">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="agency-tier">Agency Tier</label>
+              <select id="agency-tier" required>
+                <option value="Platinum">Platinum</option>
+                <option value="Gold">Gold</option>
+                <option value="Diamond">Diamond</option>
+                <option value="Registered">Registered</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="commitment-type">Commitment Type</label>
+              <select id="commitment-type" required>
+                <option value="Monthly Spending">Monthly Spending</option>
+                <option value="Annual Spending">Annual Spending</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="commitment-duration">Commitment Duration</label>
+              <select id="commitment-duration" required>
+                <option value="36 months" selected>36 months</option>
+                <option value="24 months">24 months</option>
+                <option value="12 months">12 months</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="contract-type">Contract Type</label>
+              <select id="contract-type" required>
+                <option value="Reseller" selected>Reseller</option>
+                <option value="Direct">Direct</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="free-user-licenses">Free User Licenses</label>
+              <input type="number" id="free-user-licenses" value="10" min="0" step="1" required>
+            </div>
+
+            <div class="form-group">
+              <label for="support-level">Support Level</label>
+              <select id="support-level" required>
+                <option value="Advanced Support" selected>Advanced Support</option>
+                <option value="Premium Support">Premium Support</option>
+                <option value="None">None</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="year1-commitment">Year 1 Commitment ($)</label>
+              <input type="number" id="year1-commitment" value="14000" min="0" step="1" required>
+            </div>
+
+            <div class="form-group">
+              <label for="year2-commitment">Year 2 Commitment ($)</label>
+              <input type="number" id="year2-commitment" value="15000" min="0" step="1" required>
+            </div>
+
+            <div class="form-group">
+              <label for="year3-commitment">Year 3 Commitment ($)</label>
+              <input type="number" id="year3-commitment" value="14000" min="0" step="1" required>
+            </div>
+          </div>
+
+          <h3>Monthly Usage (List Price)</h3>
+          <div class="monthly-usage-grid" id="monthly-usage-inputs">
+            <!-- Will be populated by JavaScript -->
+          </div>
+
+          <button type="submit" class="calculate-btn">Calculate</button>
+        </form>
+      </section>
+
+      <section class="discounts-section" id="discounts-section">
+        <h2>Discounts</h2>
+        <div id="discounts-display"></div>
+      </section>
+
+      <section class="results-section" id="results-section">
+        <h2>Results</h2>
+        <div id="summary-display"></div>
+        <div id="results-table"></div>
+      </section>
+    </main>
+
+    <footer>
+      <p>Licensed under GPL v3 | Agency Commitment & Discount Calculator</p>
+    </footer>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
