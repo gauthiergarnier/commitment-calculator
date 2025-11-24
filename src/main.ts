@@ -1,8 +1,25 @@
 import './style.css'
+import 'ag-grid-community/styles/ag-grid.css'
+import 'ag-grid-community/styles/ag-theme-quartz.css'
+import { createGrid, GridApi, GridOptions, ColDef, ValueFormatterParams, CellClassParams, RowClassParams, ModuleRegistry, AllCommunityModule } from 'ag-grid-community'
+
+// Register AG Grid modules
+ModuleRegistry.registerModules([AllCommunityModule])
 
 // Constants
-const USER_LICENSE_COST = 19
 const DEFAULT_MONTHLY_USAGE = [1512, 1800, 1200, 1500, 5000, 500, 1500, 1500, 1500, 1500, 1500, 1500]
+const DEFAULT_YEAR_COMMITMENTS = [14000, 15000, 14000]
+
+// Currency pricing (license + advanced user management)
+const CURRENCY_PRICING = {
+  USD: { symbol: '$', code: 'USD', license: 10, advanced: 9, total: 19 },
+  EUR: { symbol: '€', code: 'EUR', license: 10, advanced: 9, total: 19 },
+  GBP: { symbol: '£', code: 'GBP', license: 8.5, advanced: 7.5, total: 16 },
+  CAD: { symbol: 'C$', code: 'CAD', license: 14.5, advanced: 13, total: 27.5 },
+  AUD: { symbol: 'A$', code: 'AUD', license: 16.5, advanced: 15, total: 31.5 },
+}
+
+type Currency = keyof typeof CURRENCY_PRICING
 
 // Types
 interface CalculatorInputs {
@@ -24,8 +41,11 @@ interface Discounts {
   referralFollowing: number
 }
 
-interface MonthlyResult {
-  month: string
+interface GridRow {
+  period: string
+  rowType: 'year' | 'month'
+  yearIndex?: number
+  monthIndex?: number
   usage: number
   freeLicenses: number
   supportDiscount: number
@@ -38,43 +58,59 @@ interface MonthlyResult {
   blendedDiscount: number
 }
 
-interface YearResult {
-  year: number
-  totalUsage: number
-  totalUsageAfterDiscount: number
-  yearlyCommitment: number
-  costOfCommitment: number
-  monthlyProjection: number
-  totalTrueUp: number
-  totalOverage: number
-  totalMonthlyCost: number
-  blendedDiscount: number
-  months: MonthlyResult[]
-}
+// Application state
+let monthlyUsage: number[][] = [
+  [...DEFAULT_MONTHLY_USAGE],
+  [...DEFAULT_MONTHLY_USAGE],
+  [...DEFAULT_MONTHLY_USAGE],
+]
+let yearCommitments: number[] = [...DEFAULT_YEAR_COMMITMENTS]
+let grid: GridApi | null = null
+let currentCurrency: Currency = 'USD'
+let currentTheme: 'light' | 'dark' = 'dark'
 
 // Utility functions
-function formatCurrency(amount: number): string {
+function formatCurrency(params: ValueFormatterParams): string {
+  if (params.value == null || isNaN(params.value)) return '-'
+  const pricing = CURRENCY_PRICING[currentCurrency]
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency: 'USD',
+    currency: pricing.code,
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }).format(amount)
+  }).format(params.value)
 }
 
-function formatPercent(value: number): string {
+function formatPercent(params: ValueFormatterParams): string {
+  if (params.value == null || isNaN(params.value)) return '-'
+  return (params.value * 100).toFixed(1) + '%'
+}
+
+function formatCurrencyValue(value: number): string {
+  const pricing = CURRENCY_PRICING[currentCurrency]
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: pricing.code,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value)
+}
+
+function formatPercentValue(value: number): string {
   return (value * 100).toFixed(1) + '%'
 }
 
-// Calculate discounts based on inputs
-function calculateDiscounts(inputs: CalculatorInputs): Discounts {
-  // Reseller discount: 10% if Reseller and not Registered tier
-  const resellerDiscount =
-    inputs.contractType === 'Reseller' && inputs.agencyTier !== 'Registered'
-      ? 0.1
-      : 0
+// Row class rules for row styling
+function getRowClass(params: RowClassParams): string {
+  const row = params.data as GridRow
+  return row.rowType === 'year' ? 'year-row' : ''
+}
 
-  // Commitment discount based on type and duration
+// Calculate discounts
+function calculateDiscounts(inputs: CalculatorInputs): Discounts {
+  const resellerDiscount =
+    inputs.contractType === 'Reseller' && inputs.agencyTier !== 'Registered' ? 0.1 : 0
+
   let commitmentDiscount = 0
   if (inputs.commitmentType === 'Monthly Spending') {
     if (inputs.commitmentDuration === '12 months') commitmentDiscount = 0.1
@@ -86,7 +122,6 @@ function calculateDiscounts(inputs: CalculatorInputs): Discounts {
     else if (inputs.commitmentDuration === '36 months') commitmentDiscount = 0.15
   }
 
-  // Commitment bonus: only for Reseller with Monthly Spending
   let commitmentBonus = 0
   if (inputs.contractType === 'Reseller' && inputs.commitmentType === 'Monthly Spending') {
     if (inputs.agencyTier === 'Gold') commitmentBonus = 0.05
@@ -94,7 +129,6 @@ function calculateDiscounts(inputs: CalculatorInputs): Discounts {
       commitmentBonus = 0.07
   }
 
-  // Referral commissions
   const referralYear1 = inputs.agencyTier !== 'Registered' ? 0.1 : 0
 
   let referralFollowing = 0
@@ -111,143 +145,95 @@ function calculateDiscounts(inputs: CalculatorInputs): Discounts {
   }
 }
 
-// Calculate results for one year
-function calculateYear(
-  yearIndex: number,
-  inputs: CalculatorInputs,
-  discounts: Discounts,
-  monthlyUsage: number[]
-): YearResult {
-  const yearlyCommitment = inputs.yearCommitments[yearIndex]
-  const committedMonthly = yearlyCommitment / 12
-  const costOfCommitment =
-    yearlyCommitment * (1 - (discounts.commitmentDiscount + discounts.commitmentBonus))
-  const monthlyCommitmentCost = costOfCommitment / 12
+// Calculate grid rows
+function calculateGridData(inputs: CalculatorInputs, discounts: Discounts): GridRow[] {
+  const rows: GridRow[] = []
 
-  const months: MonthlyResult[] = []
-  let totalUsage = 0
-  let totalUsageAfterDiscount = 0
-  let totalTrueUp = 0
-  let totalOverage = 0
-  let totalMonthlyCost = 0
+  for (let yearIndex = 0; yearIndex < 3; yearIndex++) {
+    const yearlyCommitment = inputs.yearCommitments[yearIndex]
+    const committedMonthly = yearlyCommitment / 12
+    const costOfCommitment =
+      yearlyCommitment * (1 - (discounts.commitmentDiscount + discounts.commitmentBonus))
+    const monthlyCommitmentCost = costOfCommitment / 12
 
-  for (let i = 0; i < 12; i++) {
-    const usage = monthlyUsage[i]
-    const freeLicenses = -USER_LICENSE_COST * inputs.freeUserLicenses
+    let yearTotalUsage = 0
+    let yearTotalUsageAfterDiscount = 0
+    let yearTotalTrueUp = 0
+    let yearTotalOverage = 0
+    let yearTotalMonthlyCost = 0
 
-    let supportDiscount = 0
-    if (inputs.supportLevel === 'Advanced Support') {
-      supportDiscount = -usage * 0.05
-    } else if (inputs.supportLevel === 'Premium Support') {
-      supportDiscount = -usage * 0.04
+    // Calculate monthly rows first
+    const monthlyRows: GridRow[] = []
+    for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
+      const usage = inputs.monthlyUsage[yearIndex][monthIndex]
+      const freeLicenses = -CURRENCY_PRICING[currentCurrency].total * inputs.freeUserLicenses
+
+      let supportDiscount = 0
+      if (inputs.supportLevel === 'Advanced Support') {
+        supportDiscount = -usage * 0.05
+      } else if (inputs.supportLevel === 'Premium Support') {
+        supportDiscount = -usage * 0.04
+      }
+
+      const resellerDiscountAmount = -discounts.resellerDiscount * usage
+      const usageAfterDiscount = usage + freeLicenses + supportDiscount + resellerDiscountAmount
+
+      const trueUp = Math.max(0, committedMonthly - usageAfterDiscount)
+      const overage = Math.max(0, usageAfterDiscount - committedMonthly)
+      const monthlyCost = monthlyCommitmentCost + overage
+      const blendedDiscount = (monthlyCost - usage) / usage
+
+      yearTotalUsage += usage
+      yearTotalUsageAfterDiscount += usageAfterDiscount
+      yearTotalTrueUp += trueUp
+      yearTotalOverage += overage
+      yearTotalMonthlyCost += monthlyCost
+
+      monthlyRows.push({
+        period: `Month ${monthIndex + 1}`,
+        rowType: 'month',
+        yearIndex,
+        monthIndex,
+        usage,
+        freeLicenses,
+        supportDiscount,
+        resellerDiscount: resellerDiscountAmount,
+        usageAfterDiscount,
+        committedAmount: committedMonthly,
+        trueUp,
+        overage,
+        monthlyCost,
+        blendedDiscount,
+      })
     }
 
-    const resellerDiscountAmount = -discounts.resellerDiscount * usage
-    const usageAfterDiscount =
-      usage + freeLicenses + supportDiscount + resellerDiscountAmount
+    const yearBlendedDiscount = (yearTotalMonthlyCost - yearTotalUsage) / yearTotalUsage
 
-    const trueUp = Math.max(0, committedMonthly - usageAfterDiscount)
-    const overage = Math.max(0, usageAfterDiscount - committedMonthly)
-    const monthlyCost = monthlyCommitmentCost + overage
-    const blendedDiscount = (monthlyCost - usage) / usage
-
-    months.push({
-      month: `Month ${i + 1}`,
-      usage,
-      freeLicenses,
-      supportDiscount,
-      resellerDiscount: resellerDiscountAmount,
-      usageAfterDiscount,
-      committedAmount: committedMonthly,
-      trueUp,
-      overage,
-      monthlyCost,
-      blendedDiscount,
+    // Add year summary row
+    rows.push({
+      period: `Year ${yearIndex + 1}`,
+      rowType: 'year',
+      yearIndex,
+      usage: yearTotalUsage,
+      freeLicenses: 0,
+      supportDiscount: 0,
+      resellerDiscount: 0,
+      usageAfterDiscount: yearTotalUsageAfterDiscount,
+      committedAmount: yearlyCommitment,
+      trueUp: yearTotalTrueUp,
+      overage: yearTotalOverage,
+      monthlyCost: yearTotalMonthlyCost,
+      blendedDiscount: yearBlendedDiscount,
     })
 
-    totalUsage += usage
-    totalUsageAfterDiscount += usageAfterDiscount
-    totalTrueUp += trueUp
-    totalOverage += overage
-    totalMonthlyCost += monthlyCost
+    // Add monthly rows
+    rows.push(...monthlyRows)
   }
 
-  const blendedDiscount = (totalMonthlyCost - totalUsage) / totalUsage
-
-  return {
-    year: yearIndex + 1,
-    totalUsage,
-    totalUsageAfterDiscount,
-    yearlyCommitment,
-    costOfCommitment,
-    monthlyProjection: costOfCommitment / 12,
-    totalTrueUp,
-    totalOverage,
-    totalMonthlyCost,
-    blendedDiscount,
-    months,
-  }
+  return rows
 }
 
-// Calculate all years
-function calculateResults(inputs: CalculatorInputs): {
-  discounts: Discounts
-  years: YearResult[]
-  avgMonthlyCost: number
-} {
-  const discounts = calculateDiscounts(inputs)
-  const years: YearResult[] = []
-
-  for (let i = 0; i < inputs.yearCommitments.length; i++) {
-    const yearResult = calculateYear(i, inputs, discounts, inputs.monthlyUsage[i])
-    years.push(yearResult)
-  }
-
-  // Calculate average monthly cost across all years
-  const totalMonthlyCost = years.reduce((sum, year) => sum + year.totalMonthlyCost, 0)
-  const totalMonths = years.reduce((sum, year) => sum + year.months.length, 0)
-  const avgMonthlyCost = totalMonthlyCost / totalMonths
-
-  return { discounts, years, avgMonthlyCost }
-}
-
-// UI functions
-function createMonthlyUsageInputs(): void {
-  const container = document.getElementById('monthly-usage-inputs')
-  if (!container) return
-
-  container.innerHTML = ''
-
-  for (let year = 0; year < 3; year++) {
-    const yearDiv = document.createElement('div')
-    yearDiv.style.gridColumn = '1 / -1'
-    yearDiv.innerHTML = `<h4 style="margin: 1rem 0 0.5rem 0;">Year ${year + 1}</h4>`
-    container.appendChild(yearDiv)
-
-    for (let month = 0; month < 12; month++) {
-      const formGroup = document.createElement('div')
-      formGroup.className = 'form-group'
-
-      const label = document.createElement('label')
-      label.textContent = `M${month + 1}`
-      label.htmlFor = `usage-y${year}-m${month}`
-
-      const input = document.createElement('input')
-      input.type = 'number'
-      input.id = `usage-y${year}-m${month}`
-      input.name = `usage-y${year}-m${month}`
-      input.min = '0'
-      input.step = '1'
-      input.value = DEFAULT_MONTHLY_USAGE[month].toString()
-      input.required = true
-
-      formGroup.appendChild(label)
-      formGroup.appendChild(input)
-      container.appendChild(formGroup)
-    }
-  }
-}
-
+// Get form inputs
 function getFormInputs(): CalculatorInputs {
   const agencyTier = (document.getElementById('agency-tier') as HTMLSelectElement).value
   const commitmentType = (document.getElementById('commitment-type') as HTMLSelectElement).value
@@ -260,22 +246,6 @@ function getFormInputs(): CalculatorInputs {
   )
   const supportLevel = (document.getElementById('support-level') as HTMLSelectElement).value
 
-  const yearCommitments = [
-    parseInt((document.getElementById('year1-commitment') as HTMLInputElement).value),
-    parseInt((document.getElementById('year2-commitment') as HTMLInputElement).value),
-    parseInt((document.getElementById('year3-commitment') as HTMLInputElement).value),
-  ]
-
-  const monthlyUsage: number[][] = []
-  for (let year = 0; year < 3; year++) {
-    const yearUsage: number[] = []
-    for (let month = 0; month < 12; month++) {
-      const input = document.getElementById(`usage-y${year}-m${month}`) as HTMLInputElement
-      yearUsage.push(parseFloat(input.value) || 0)
-    }
-    monthlyUsage.push(yearUsage)
-  }
-
   return {
     agencyTier,
     commitmentType,
@@ -283,11 +253,12 @@ function getFormInputs(): CalculatorInputs {
     contractType,
     freeUserLicenses,
     supportLevel,
-    yearCommitments,
-    monthlyUsage,
+    yearCommitments: [...yearCommitments],
+    monthlyUsage: monthlyUsage.map(year => [...year]),
   }
 }
 
+// Display discounts
 function displayDiscounts(discounts: Discounts): void {
   const container = document.getElementById('discounts-display')
   if (!container) return
@@ -298,148 +269,398 @@ function displayDiscounts(discounts: Discounts): void {
         <span class="discount-label">Reseller Discount</span>
         <span class="discount-note">(applied on all usage)</span>
       </div>
-      <span class="discount-value">${formatPercent(discounts.resellerDiscount)}</span>
+      <span class="discount-value">${formatPercentValue(discounts.resellerDiscount)}</span>
     </div>
     <div class="discount-item">
       <div>
         <span class="discount-label">Commitment Discount</span>
         <span class="discount-note">(applied on the commitment amount)</span>
       </div>
-      <span class="discount-value">${formatPercent(discounts.commitmentDiscount)}</span>
+      <span class="discount-value">${formatPercentValue(discounts.commitmentDiscount)}</span>
     </div>
     <div class="discount-item">
       <div>
         <span class="discount-label">Commitment Bonus</span>
         <span class="discount-note">(applied on the commitment amount)</span>
       </div>
-      <span class="discount-value">${formatPercent(discounts.commitmentBonus)}</span>
+      <span class="discount-value">${formatPercentValue(discounts.commitmentBonus)}</span>
     </div>
     <div class="discount-item">
-      <span class="discount-label">Referral Commission (1st year)</span>
-      <span class="discount-value">${formatPercent(discounts.referralYear1)}</span>
+      <div>
+        <span class="discount-label">Referral Commission (1st year)</span>
+      </div>
+      <span class="discount-value">${formatPercentValue(discounts.referralYear1)}</span>
     </div>
     <div class="discount-item">
-      <span class="discount-label">Referral Commission (Following years)</span>
-      <span class="discount-value">${formatPercent(discounts.referralFollowing)}</span>
+      <div>
+        <span class="discount-label">Referral Commission (Following years)</span>
+      </div>
+      <span class="discount-value">${formatPercentValue(discounts.referralFollowing)}</span>
     </div>
   `
-
-  document.getElementById('discounts-section')?.classList.add('visible')
 }
 
-function displayResults(
-  years: YearResult[],
-  discounts: Discounts,
-  avgMonthlyCost: number
-): void {
-  const summaryContainer = document.getElementById('summary-display')
-  const tableContainer = document.getElementById('results-table')
+// Display summary
+function displaySummary(avgMonthlyCost: number, discounts: Discounts): void {
+  const container = document.getElementById('summary-display')
+  if (!container) return
 
-  if (!summaryContainer || !tableContainer) return
-
-  // Display summary
-  summaryContainer.innerHTML = `
+  container.innerHTML = `
     <div class="summary-item">
-      <strong>Average Monthly Cost:</strong> ${formatCurrency(avgMonthlyCost)}
-      <span class="discount-note">with ${formatPercent(discounts.commitmentDiscount)} commitment discount + ${formatPercent(discounts.commitmentBonus)} commitment bonus</span>
+      <strong>Average Monthly Cost:</strong> ${formatCurrencyValue(avgMonthlyCost)}
+      <span class="summary-note">with ${formatPercentValue(discounts.commitmentDiscount)} commitment discount + ${formatPercentValue(discounts.commitmentBonus)} commitment bonus</span>
+    </div>
+  `
+}
+
+// Define AG Grid columns
+function getColumnDefs(): ColDef[] {
+  return [
+    {
+      field: 'period',
+      headerName: 'Period',
+      pinned: 'left',
+      width: 100,
+      editable: false,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: (params: CellClassParams) => {
+        const row = params.data as GridRow
+        return row.rowType === 'year' ? 'ag-cell-readonly font-bold' : 'ag-cell-readonly'
+      },
+    },
+    {
+      field: 'usage',
+      headerName: 'Usage\n(List Price)',
+      width: 120,
+      editable: (params) => params.data.rowType === 'month',
+      valueFormatter: formatCurrency,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: (params: CellClassParams) => {
+        const row = params.data as GridRow
+        return row.rowType === 'month'
+          ? 'ag-cell-editable cell-currency'
+          : 'ag-cell-readonly cell-currency'
+      },
+      valueSetter: (params) => {
+        const row = params.data as GridRow
+        if (row.rowType === 'month' && row.yearIndex !== undefined && row.monthIndex !== undefined) {
+          const newValue = parseFloat(params.newValue) || 0
+          monthlyUsage[row.yearIndex][row.monthIndex] = newValue
+          recalculate()
+          return true
+        }
+        return false
+      },
+      cellEditorParams: {
+        useFormatter: false,
+      },
+    },
+    {
+      field: 'freeLicenses',
+      headerName: 'Free\nLicenses',
+      width: 100,
+      editable: false,
+      valueFormatter: formatCurrency,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: 'ag-cell-readonly cell-currency',
+      tooltipValueGetter: () => 'Auto-calculated based on Free User Licenses setting',
+    },
+    {
+      field: 'supportDiscount',
+      headerName: 'Support\nDiscount',
+      width: 110,
+      editable: false,
+      valueFormatter: formatCurrency,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: 'ag-cell-readonly cell-currency',
+      tooltipValueGetter: () => 'Auto-calculated based on Support Level setting',
+    },
+    {
+      field: 'resellerDiscount',
+      headerName: 'Reseller\nDiscount',
+      width: 110,
+      editable: false,
+      valueFormatter: formatCurrency,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: 'ag-cell-readonly cell-currency',
+      tooltipValueGetter: () => 'Auto-calculated based on Contract Type setting',
+    },
+    {
+      field: 'usageAfterDiscount',
+      headerName: 'Usage After\nDiscount',
+      width: 120,
+      editable: false,
+      valueFormatter: formatCurrency,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: 'ag-cell-readonly cell-currency',
+      tooltipValueGetter: () => 'Auto-calculated',
+    },
+    {
+      field: 'committedAmount',
+      headerName: 'Committed\nAmount',
+      width: 120,
+      editable: (params) => params.data.rowType === 'year',
+      valueFormatter: formatCurrency,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: (params: CellClassParams) => {
+        const row = params.data as GridRow
+        return row.rowType === 'year'
+          ? 'ag-cell-editable cell-currency'
+          : 'ag-cell-readonly cell-currency'
+      },
+      valueSetter: (params) => {
+        const row = params.data as GridRow
+        if (row.rowType === 'year' && row.yearIndex !== undefined) {
+          const newValue = parseFloat(params.newValue) || 0
+          yearCommitments[row.yearIndex] = newValue
+          recalculate()
+          return true
+        }
+        return false
+      },
+      cellEditorParams: {
+        useFormatter: false,
+      },
+    },
+    {
+      field: 'trueUp',
+      headerName: 'True Up',
+      width: 100,
+      editable: false,
+      valueFormatter: formatCurrency,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: 'ag-cell-readonly cell-currency',
+      tooltipValueGetter: () => 'Auto-calculated',
+    },
+    {
+      field: 'overage',
+      headerName: 'Overage',
+      width: 100,
+      editable: false,
+      valueFormatter: formatCurrency,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: 'ag-cell-readonly cell-currency',
+      tooltipValueGetter: () => 'Auto-calculated',
+    },
+    {
+      field: 'monthlyCost',
+      headerName: 'Monthly\nCost',
+      width: 110,
+      editable: false,
+      valueFormatter: formatCurrency,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      cellClass: 'ag-cell-readonly cell-currency',
+      tooltipValueGetter: () => 'Auto-calculated',
+    },
+    {
+      field: 'blendedDiscount',
+      headerName: 'Blended\nDiscount',
+      width: 110,
+      editable: false,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      valueFormatter: formatPercent,
+      cellClass: 'ag-cell-readonly cell-percent',
+      tooltipValueGetter: () => 'Auto-calculated',
+    },
+  ]
+}
+
+// Initialize AG Grid
+function initializeGrid(): void {
+  const gridContainer = document.getElementById('data-grid')
+  if (!gridContainer) return
+
+  const gridOptions: GridOptions = {
+    columnDefs: getColumnDefs(),
+    rowData: [],
+    defaultColDef: {
+      sortable: true,
+      filter: false,
+      resizable: true,
+      suppressMovable: true,
+      enableCellChangeFlash: true,
+    },
+    suppressCellFocus: false,
+    enableRangeSelection: false,
+    rowSelection: 'single',
+    getRowClass: getRowClass,
+    tooltipShowDelay: 500,
+    suppressHorizontalScroll: false,
+    onCellEditingStopped: () => {
+      // Recalculation is handled in valueSetter
+    },
+  }
+
+  grid = createGrid(gridContainer, gridOptions)
+}
+
+// Recalculate and update grid
+function recalculate(): void {
+  const inputs = getFormInputs()
+  const discounts = calculateDiscounts(inputs)
+  const gridData = calculateGridData(inputs, discounts)
+
+  // Calculate average monthly cost
+  const totalMonthlyCost = gridData
+    .filter(row => row.rowType === 'year')
+    .reduce((sum, row) => sum + row.monthlyCost, 0)
+  const avgMonthlyCost = totalMonthlyCost / 36
+
+  // Update displays
+  displayDiscounts(discounts)
+  displaySummary(avgMonthlyCost, discounts)
+
+  // Update grid
+  if (grid) {
+    grid.setGridOption('rowData', gridData)
+  }
+
+  // Update mobile cards
+  updateMobileCards(gridData, avgMonthlyCost)
+}
+
+// Update mobile card layout
+function updateMobileCards(gridData: GridRow[], avgMonthlyCost: number): void {
+  const container = document.getElementById('mobile-cards')
+  if (!container) return
+
+  let html = `
+    <div class="mobile-card">
+      <div class="mobile-card-header">Summary</div>
+      <div class="mobile-card-row">
+        <span class="mobile-card-label">Average Monthly Cost</span>
+        <span class="mobile-card-value font-bold text-primary">${formatCurrencyValue(avgMonthlyCost)}</span>
+      </div>
     </div>
   `
 
-  // Build results table
-  let tableHTML = `
-    <div class="results-table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Period</th>
-            <th>Usage (List Price)</th>
-            <th>Free Licenses</th>
-            <th>Support Discount</th>
-            <th>Reseller Discount</th>
-            <th>Usage After Discount</th>
-            <th>Committed Amount</th>
-            <th>True Up</th>
-            <th>Overage</th>
-            <th>Monthly Cost</th>
-            <th>Blended Discount</th>
-          </tr>
-        </thead>
-        <tbody>
-  `
-
-  years.forEach((year) => {
-    // Year summary row
-    tableHTML += `
-      <tr class="year-row">
-        <td>Year ${year.year}</td>
-        <td>${formatCurrency(year.totalUsage)}</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-        <td>${formatCurrency(year.totalUsageAfterDiscount)}</td>
-        <td>${formatCurrency(year.yearlyCommitment)}</td>
-        <td>${formatCurrency(year.totalTrueUp)}</td>
-        <td>${formatCurrency(year.totalOverage)}</td>
-        <td>${formatCurrency(year.totalMonthlyCost)}</td>
-        <td>${formatPercent(year.blendedDiscount)}</td>
-      </tr>
-    `
-
-    // Monthly rows
-    year.months.forEach((month) => {
-      tableHTML += `
-        <tr>
-          <td>${month.month}</td>
-          <td>${formatCurrency(month.usage)}</td>
-          <td>${formatCurrency(month.freeLicenses)}</td>
-          <td>${formatCurrency(month.supportDiscount)}</td>
-          <td>${formatCurrency(month.resellerDiscount)}</td>
-          <td>${formatCurrency(month.usageAfterDiscount)}</td>
-          <td>${formatCurrency(month.committedAmount)}</td>
-          <td>${month.trueUp > 0 ? formatCurrency(month.trueUp) : '-'}</td>
-          <td>${month.overage > 0 ? formatCurrency(month.overage) : '-'}</td>
-          <td>${formatCurrency(month.monthlyCost)}</td>
-          <td>${formatPercent(month.blendedDiscount)}</td>
-        </tr>
+  gridData.forEach((row) => {
+    if (row.rowType === 'year') {
+      html += `
+        <div class="mobile-card year-card">
+          <div class="mobile-card-header">${row.period}</div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Total Usage</span>
+            <span class="mobile-card-value">${formatCurrencyValue(row.usage)}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Committed Amount</span>
+            <span class="mobile-card-value">
+              <input type="number" value="${row.committedAmount}" data-year="${row.yearIndex}" class="mobile-commitment-input" />
+            </span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Total Cost</span>
+            <span class="mobile-card-value font-bold">${formatCurrencyValue(row.monthlyCost)}</span>
+          </div>
+        </div>
       `
+    } else {
+      html += `
+        <div class="mobile-card">
+          <div class="mobile-card-header">${row.period}</div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Usage</span>
+            <span class="mobile-card-value">
+              <input type="number" value="${row.usage}" data-year="${row.yearIndex}" data-month="${row.monthIndex}" class="mobile-usage-input" />
+            </span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Usage After Discount</span>
+            <span class="mobile-card-value">${formatCurrencyValue(row.usageAfterDiscount)}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Monthly Cost</span>
+            <span class="mobile-card-value font-bold">${formatCurrencyValue(row.monthlyCost)}</span>
+          </div>
+        </div>
+      `
+    }
+  })
+
+  container.innerHTML = html
+
+  // Attach mobile input listeners
+  container.querySelectorAll('.mobile-commitment-input').forEach(input => {
+    input.addEventListener('change', (e) => {
+      const target = e.target as HTMLInputElement
+      const yearIndex = parseInt(target.dataset.year || '0')
+      yearCommitments[yearIndex] = parseFloat(target.value) || 0
+      recalculate()
     })
   })
 
-  tableHTML += `
-        </tbody>
-      </table>
-    </div>
-  `
-
-  tableContainer.innerHTML = tableHTML
-  document.getElementById('results-section')?.classList.add('visible')
-}
-
-function handleFormSubmit(e: Event): void {
-  e.preventDefault()
-
-  try {
-    const inputs = getFormInputs()
-    const { discounts, years, avgMonthlyCost } = calculateResults(inputs)
-
-    displayDiscounts(discounts)
-    displayResults(years, discounts, avgMonthlyCost)
-
-    // Scroll to results
-    document.getElementById('results-section')?.scrollIntoView({ behavior: 'smooth' })
-  } catch (error) {
-    alert('Error calculating results: ' + (error as Error).message)
-  }
+  container.querySelectorAll('.mobile-usage-input').forEach(input => {
+    input.addEventListener('change', (e) => {
+      const target = e.target as HTMLInputElement
+      const yearIndex = parseInt(target.dataset.year || '0')
+      const monthIndex = parseInt(target.dataset.month || '0')
+      monthlyUsage[yearIndex][monthIndex] = parseFloat(target.value) || 0
+      recalculate()
+    })
+  })
 }
 
 // Initialize the application
 function init(): void {
-  createMonthlyUsageInputs()
+  // Initialize grid
+  initializeGrid()
 
-  const form = document.getElementById('calculator-form')
-  if (form) {
-    form.addEventListener('submit', handleFormSubmit)
+  // Add change listeners to configuration inputs
+  const configInputs = [
+    'agency-tier',
+    'commitment-type',
+    'commitment-duration',
+    'contract-type',
+    'support-level',
+    'free-user-licenses',
+  ]
+
+  configInputs.forEach(id => {
+    const element = document.getElementById(id)
+    if (element) {
+      element.addEventListener('change', recalculate)
+      element.addEventListener('input', recalculate)
+    }
+  })
+
+  // Currency selector
+  const currencySelector = document.getElementById('currency') as HTMLSelectElement
+  if (currencySelector) {
+    currencySelector.addEventListener('change', (e) => {
+      currentCurrency = (e.target as HTMLSelectElement).value as Currency
+      recalculate()
+    })
   }
+
+  // Theme toggle
+  const themeToggle = document.getElementById('theme-toggle') as HTMLButtonElement
+  if (themeToggle) {
+    themeToggle.addEventListener('click', () => {
+      currentTheme = currentTheme === 'dark' ? 'light' : 'dark'
+      document.documentElement.setAttribute('data-theme', currentTheme)
+      // Icons switch automatically via CSS
+    })
+  }
+
+  // Initialize theme based on system preference if not already set
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  currentTheme = prefersDark ? 'dark' : 'light'
+  document.documentElement.setAttribute('data-theme', currentTheme)
+
+  // Initial calculation
+  recalculate()
 }
 
 // Start the app when DOM is ready
