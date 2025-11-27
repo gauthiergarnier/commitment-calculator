@@ -8,6 +8,7 @@ export const TEMPLATES: Record<TemplateType, Template> = {
     icon: 'Globe',
     baseMonthlyUsage: 1200,
     variability: 0.1,
+    defaultMonthlyCost: 1200,
   },
   '5-marketing-websites': {
     id: '5-marketing-websites',
@@ -16,6 +17,7 @@ export const TEMPLATES: Record<TemplateType, Template> = {
     icon: 'LayoutGrid',
     baseMonthlyUsage: 5000,
     variability: 0.15,
+    defaultMonthlyCost: 5000,
   },
   '1-ecommerce-website': {
     id: '1-ecommerce-website',
@@ -24,6 +26,7 @@ export const TEMPLATES: Record<TemplateType, Template> = {
     icon: 'ShoppingCart',
     baseMonthlyUsage: 2500,
     variability: 0.2,
+    defaultMonthlyCost: 2500,
   },
   '5-ecommerce-websites': {
     id: '5-ecommerce-websites',
@@ -32,6 +35,7 @@ export const TEMPLATES: Record<TemplateType, Template> = {
     icon: 'Store',
     baseMonthlyUsage: 10000,
     variability: 0.25,
+    defaultMonthlyCost: 10000,
   },
   'small-agency': {
     id: 'small-agency',
@@ -40,6 +44,7 @@ export const TEMPLATES: Record<TemplateType, Template> = {
     icon: 'Building2',
     baseMonthlyUsage: 8000,
     variability: 0.2,
+    defaultMonthlyCost: 8000,
   },
   'large-agency': {
     id: 'large-agency',
@@ -48,6 +53,7 @@ export const TEMPLATES: Record<TemplateType, Template> = {
     icon: 'Building',
     baseMonthlyUsage: 18000,
     variability: 0.3,
+    defaultMonthlyCost: 18000,
   },
 };
 

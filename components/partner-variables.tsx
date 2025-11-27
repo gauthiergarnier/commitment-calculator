@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { motion, AnimatePresence } from "framer-motion"
+import { ChevronDown } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -42,16 +44,36 @@ export function PartnerVariables({
   onSupportLevelChange,
   onFreeUserLicensesChange,
 }: PartnerVariablesProps) {
+  const [isExpanded, setIsExpanded] = React.useState(true)
+
   return (
     <Card className="rounded-2xl">
-      <CardHeader>
-        <CardTitle className="font-heading">Partner Configuration</CardTitle>
-        <CardDescription>
-          Configure your agency level, commitment type, and contract details
-        </CardDescription>
+      <CardHeader className="cursor-pointer" onClick={() => setIsExpanded(!isExpanded)}>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="font-heading">Partner Configuration</CardTitle>
+            <CardDescription>
+              Configure your agency level, commitment type, and contract details
+            </CardDescription>
+          </div>
+          <motion.div
+            animate={{ rotate: isExpanded ? 0 : -90 }}
+            transition={{ duration: 0.2 }}
+          >
+            <ChevronDown className="h-5 w-5 text-muted-foreground" />
+          </motion.div>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+      <AnimatePresence initial={false}>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeInOut" }}
+          >
+            <CardContent className="space-y-6">
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {/* Partner Level */}
           <div className="space-y-2">
             <Label>Partner Level</Label>
@@ -137,16 +159,19 @@ export function PartnerVariables({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {[0, 1, 2, 3, 4, 5].map((num) => (
+                {Array.from({ length: 26 }, (_, i) => i).map((num) => (
                   <SelectItem key={num} value={num.toString()}>
                     {num}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
-        </div>
-      </CardContent>
+              </div>
+              </div>
+            </CardContent>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Card>
   )
 }

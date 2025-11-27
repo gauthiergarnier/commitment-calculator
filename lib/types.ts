@@ -60,12 +60,16 @@ export interface Discounts {
 export interface MonthlyCalculation {
   month: number;
   year: number;
+  baseUsage: number;
+  costVariation: number;
   usage: number;
   freeLicenses: number;
   supportDiscount: number;
   resellerDiscount: number;
   usageAfterDiscount: number;
   committedAmount: number;
+  costOfCommitmentYearly: number;
+  costOfCommitmentMonthly: number;
   trueUp: number;
   overage: number;
   monthlyCost: number;
@@ -101,6 +105,7 @@ export interface Template {
   icon: string;
   baseMonthlyUsage: number; // Base usage pattern
   variability: number; // How much it varies month-to-month
+  defaultMonthlyCost: number; // Default monthly cost estimate
 }
 
 // Variation pattern definition

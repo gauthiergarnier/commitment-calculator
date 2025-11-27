@@ -6,6 +6,7 @@ import {
   CalculationResult,
   CURRENCY_PRICING,
 } from './types';
+import { MonthlyUsageData } from './variation-patterns';
 
 /**
  * Calculate all discount percentages based on partner configuration
@@ -57,7 +58,7 @@ export function calculateDiscounts(inputs: CalculatorInputs): Discounts {
  */
 export function calculateProjection(
   inputs: CalculatorInputs,
-  monthlyUsage: number[][],
+  monthlyUsage: MonthlyUsageData[][],
   yearCommitments: number[]
 ): CalculationResult {
   const discounts = calculateDiscounts(inputs);
@@ -79,7 +80,10 @@ export function calculateProjection(
 
     // Calculate each month
     for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
-      const usage = monthlyUsage[yearIndex][monthIndex];
+      const usageData = monthlyUsage[yearIndex][monthIndex];
+      const baseUsage = usageData.baseUsage;
+      const costVariation = usageData.variation;
+      const usage = usageData.totalUsage;
       const freeLicenses = -CURRENCY_PRICING[inputs.currency].total * inputs.freeUserLicenses;
 
       // Support discount
@@ -107,12 +111,16 @@ export function calculateProjection(
       monthlyCalculations.push({
         month: monthIndex + 1,
         year: yearIndex + 1,
+        baseUsage,
+        costVariation,
         usage,
         freeLicenses,
         supportDiscount,
         resellerDiscount: resellerDiscountAmount,
         usageAfterDiscount,
         committedAmount: committedMonthly,
+        costOfCommitmentYearly: costOfCommitment,
+        costOfCommitmentMonthly: monthlyCommitmentCost,
         trueUp,
         overage,
         monthlyCost,
@@ -169,4 +177,20 @@ export function formatCurrency(value: number, currency: keyof typeof CURRENCY_PR
  */
 export function formatPercent(value: number): string {
   return (value * 100).toFixed(1) + '%';
+}
+
+/**
+ * Calculate optimal yearly commitments based on average usage after discounts
+ * Returns the average of usageAfterDiscount × 12 for each year
+ */
+export function calculateOptimalCommitments(result: CalculationResult): [number, number, number] {
+  const commitments: [number, number, number] = [0, 0, 0];
+
+  for (let year = 0; year < 3; year++) {
+    const yearMonths = result.monthlyCalculations.filter((m) => m.year === year + 1);
+    const avgUsageAfterDiscount = yearMonths.reduce((sum, m) => sum + m.usageAfterDiscount, 0) / 12;
+    commitments[year] = Math.round(avgUsageAfterDiscount * 12);
+  }
+
+  return commitments;
 }
