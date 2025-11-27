@@ -1,12 +1,20 @@
 # Dependencies
 node_modules/
 
+# Next.js
+.next/
+out/
+build/
+
 # Build output
 dist/
 
 # Development
 .vite/
 *.local
+
+# Testing
+coverage/
 
 # Logs
 logs
@@ -32,3 +40,17 @@ lerna-debug.log*
 .env
 .env.local
 .env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Misc
+.turbo
+*.tsbuildinfo
+next-env.d.ts
+
+# Old files (from Vite version)
+src/
+index.html
+vite.config.ts
+.playwright-mcp/
